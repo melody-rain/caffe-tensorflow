@@ -10,6 +10,8 @@ class CaffeResolver(object):
         self.caffe = None
         try:
             # Try to import PyCaffe first
+            import sys
+            sys.path.insert(0, '/home/melody/hdd1/develop/caffe-cuhk/python')
             import caffe
             self.caffe = caffe
         except ImportError:

@@ -85,6 +85,10 @@ class TensorFlowMapper(NodeMapper):
         padding = {'padding': padding} if padding != network.DEFAULT_PADDING else {}
         return (kernel_params, padding)
 
+    def get_interp_params(self, node):
+        interp_parameters = node.layer.interp_parameters
+        return interp_parameters
+
     def map_convolution(self, node):
         (kernel_params, kwargs) = self.get_kernel_params(node)
         h = kernel_params.kernel_h
@@ -118,9 +122,9 @@ class TensorFlowMapper(NodeMapper):
                               kernel_params.stride_h, kernel_params.stride_w, **padding)
 
     def map_inner_product(self, node):
-        #TODO: Axis
+        # TODO: Axis
         assert node.parameters.axis == 1
-        #TODO: Unbiased
+        # TODO: Unbiased
         assert node.parameters.bias_term == True
         return MaybeActivated(node)('fc', node.parameters.num_output)
 
@@ -150,13 +154,32 @@ class TensorFlowMapper(NodeMapper):
         kwargs = {} if scale_offset else {'scale_offset': False}
         return MaybeActivated(node, default=False)('batch_normalization', **kwargs)
 
+    def map_BN(self, node):
+        scale_offset = len(node.data) == 4
+        kwargs = {} if scale_offset else {'scale_offset': False}
+        return MaybeActivated(node, default=False)('batch_normalization', **kwargs)
+
+    def map_interp(self, node):
+        interp_params = self.get_interp_params(node)
+        shrink_factor = interp_params.shrink_factor
+        zoom_factor = interp_params.zoom_factor
+        height = interp_params.height
+        width = interp_params.width
+        pad_beg = interp_params.pad_beg
+        pad_end = interp_params.pad_end
+
+        c_o = node.output_shape[1]
+
+        return TensorFlowNode('interp', height, width, c_o,
+                              zoom_factor, shrink_factor, pad_beg, pad_end)
+
     def map_eltwise(self, node):
         operations = {0: 'multiply', 1: 'add', 2: 'max'}
         op_code = node.parameters.operation
         try:
             return TensorFlowNode(operations[op_code])
         except KeyError:
-            raise KaffeError('Unknown elementwise operation: {}'.format(op_code))
+            raise KaffeError(__file__, 'Unknown elementwise operation: {}'.format(op_code))
 
     def commit(self, chains):
         return chains
@@ -263,7 +286,10 @@ class TensorFlowTransformer(object):
                     NodeKind.Convolution: (2, 3, 1, 0),
 
                     # (c_o, c_i) -> (c_i, c_o)
-                    NodeKind.InnerProduct: (1, 0)
+                    NodeKind.InnerProduct: (1, 0),
+
+                    # (c_o, c_i, h, w) -> (h, w, c_i, c_o)
+                    NodeKind.BN: (2, 3, 1, 0)
                 }),
 
                 # Pre-process batch normalization data

@@ -90,7 +90,6 @@ class DataInjector(object):
 
 
 class DataReshaper(object):
-
     def __init__(self, mapping, replace=True):
         # A dictionary mapping NodeKind to the transposed order.
         self.mapping = mapping
@@ -112,7 +111,7 @@ class DataReshaper(object):
         try:
             return self.mapping[node_kind]
         except KeyError:
-            raise KaffeError('Ordering not found for node kind: {}'.format(node_kind))
+            raise KaffeError(__file__, 'Ordering not found for node kind: {}'.format(node_kind))
 
     def __call__(self, graph):
         for node in graph.nodes:
@@ -282,6 +281,10 @@ class ParameterNamer(object):
                 names = ('mean', 'variance')
                 if len(node.data) == 4:
                     names += ('scale', 'offset')
+            elif node.kind == NodeKind.BN:
+                names = ('slope_filler', 'bias_filler')
+                if len(node.data) == 4:
+                    names += ('mean', 'variance')
             else:
                 print_stderr('WARNING: Unhandled parameters: {}'.format(node.kind))
                 continue

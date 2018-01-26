@@ -173,7 +173,7 @@ class GraphBuilder(object):
         '''Create a graph node for the given layer.'''
         kind = NodeKind.map_raw_kind(layer.type)
         if kind is None:
-            raise KaffeError('Unknown layer type encountered: %s' % layer.type)
+            raise KaffeError(__file__, 'Unknown layer type encountered: %s' % layer.type)
         # We want to use the layer's top names (the "output" names), rather than the
         # name attribute, which is more of readability thing than a functional one.
         # Other layers will refer to a node by its "top name".
@@ -233,7 +233,7 @@ class GraphBuilder(object):
                     parent_node = graph.get_node(input_name)
                 node.add_parent(parent_node)
             if len(layer.top)>1:
-                raise KaffeError('Multiple top nodes are not supported.')
+                raise KaffeError(layer.name, 'Multiple top nodes are not supported.')
             for output_name in layer.top:
                 if output_name == layer.name:
                     # Output is named the same as the node. No further action required.

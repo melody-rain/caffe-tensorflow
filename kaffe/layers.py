@@ -49,14 +49,16 @@ LAYER_DESCRIPTORS = {
     'TanH': shape_identity,
     'WindowData': shape_not_implemented,
     'Threshold': shape_identity,
+    'BN': shape_identity,
+    'Interp': shape_interp,
 }
 
 LAYER_TYPES = LAYER_DESCRIPTORS.keys()
 
 LayerType = type('LayerType', (), {t: t for t in LAYER_TYPES})
 
-class NodeKind(LayerType):
 
+class NodeKind(LayerType):
     @staticmethod
     def map_raw_kind(kind):
         if kind in LAYER_TYPES:
@@ -69,19 +71,19 @@ class NodeKind(LayerType):
             val = LAYER_DESCRIPTORS[node.kind](node)
             return val
         except NotImplementedError:
-            raise KaffeError('Output shape computation not implemented for type: %s' % node.kind)
+            raise KaffeError(__file__, 'Output shape computation not implemented for type: %s' % node.kind)
 
 
 class NodeDispatchError(KaffeError):
-
     pass
 
 
 class NodeDispatch(object):
-
     @staticmethod
     def get_handler_name(node_kind):
-        if len(node_kind) <= 4:
+        if node_kind == 'BN':
+            return node_kind
+        elif len(node_kind) <= 4:
             # A catch-all for things like ReLU and tanh
             return node_kind.lower()
         # Convert from CamelCase to under_scored
@@ -99,10 +101,10 @@ class NodeDispatch(object):
 
 
 class LayerAdapter(object):
-
     def __init__(self, layer, kind):
         self.layer = layer
         self.kind = kind
+        self._input_shape = None
 
     @property
     def parameters(self):
@@ -130,18 +132,51 @@ class LayerAdapter(object):
             raise ValueError('Unable to determine kernel parameter!')
         return default
 
+    def set_input_shape(self, input_shape):
+        self._input_shape = input_shape
+
     @property
     def kernel_parameters(self):
         assert self.kind in (NodeKind.Convolution, NodeKind.Pooling)
         params = self.parameters
-        k_h = self.get_kernel_value(params.kernel_h, params.kernel_size, 0)
-        k_w = self.get_kernel_value(params.kernel_w, params.kernel_size, 1)
+        global_pool = hasattr(params, 'global_pooling')
+
+        if params.kernel_size:
+            k_h = self.get_kernel_value(params.kernel_h, params.kernel_size, 0)
+            k_w = self.get_kernel_value(params.kernel_w, params.kernel_size, 1)
+        elif self._input_shape:
+            k_h, k_w = [self._input_shape.height, self._input_shape.width]
+        else:  # errors out in get_kernel_value function
+            k_h = self.get_kernel_value(params.kernel_h, params.kernel_size, 0)
+            k_w = self.get_kernel_value(params.kernel_w, params.kernel_size, 1)
+
         s_h = self.get_kernel_value(params.stride_h, params.stride, 0, default=1)
         s_w = self.get_kernel_value(params.stride_w, params.stride, 1, default=1)
         p_h = self.get_kernel_value(params.pad_h, params.pad, 0, default=0)
         p_w = self.get_kernel_value(params.pad_h, params.pad, 1, default=0)
         return KernelParameters(k_h, k_w, s_h, s_w, p_h, p_w)
 
+    @property
+    def interp_parameters(self):
+        assert self.kind == NodeKind.Interp, 'Must be for interp layer'
+        params = self.parameters
+
+        shrink_factor = params.shrink_factor if params.shrink_factor else None
+        print 'dddd', params.shrink_factor
+        zoom_factor = params.zoom_factor if params.zoom_factor else None
+        height = params.height if params.height else None
+        width = params.width if params.width else None
+        pad_beg = params.pad_beg
+        pad_end = params.pad_end
+        assert pad_beg <= 0, 'Only supports non-pos padding (cropping) for now'
+        assert pad_end <= 0, 'Only supports non-pos padding (cropping) for now'
+
+        print 'interp_parameters', params, self.layer
+        return InterpParameters(height, width, zoom_factor, shrink_factor, pad_beg, pad_end)
+
 
 KernelParameters = namedtuple('KernelParameters', ['kernel_h', 'kernel_w', 'stride_h', 'stride_w',
                                                    'pad_h', 'pad_w'])
+
+InterpParameters = namedtuple('InterpParameters', ['height', 'width', 'zoom_factor',
+                                                   'shrink_factor', 'pad_beg', 'pad_end'])

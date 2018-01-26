@@ -78,7 +78,7 @@ class Network(object):
                 try:
                     fed_layer = self.layers[fed_layer]
                 except KeyError:
-                    raise KeyError('Unknown layer name fed: %s' % fed_layer)
+                    raise KeyError(__file__, 'Unknown layer name fed: %s' % fed_layer)
             self.terminals.append(fed_layer)
         return self
 
@@ -100,6 +100,56 @@ class Network(object):
     def validate_padding(self, padding):
         '''Verifies that the padding is one of the supported ones.'''
         assert padding in ('SAME', 'VALID')
+
+    @staticmethod
+    def get_interp_output_shape_impl(i_h, i_w, shrink_factor, zoom_factor, height, width, pad_beg, pad_end):
+        height_in_eff_ = int(i_h + pad_beg + pad_end)
+        width_in_eff_ = int(i_w + pad_beg + pad_end)
+
+        assert height_in_eff_ > 0, 'height should be positive'
+        assert width_in_eff_ > 0, 'width should be positive'
+
+        if shrink_factor is not None and zoom_factor is None:
+            assert shrink_factor >= 1, 'Shrink factor must be positive'
+            o_h = (height_in_eff_ - 1) / shrink_factor + 1
+            o_w = (width_in_eff_ - 1) / shrink_factor + 1
+        elif shrink_factor is None and zoom_factor is not None:
+            assert zoom_factor >= 1, 'Shrink factor must be positive'
+            o_h = height_in_eff_ + (height_in_eff_ - 1) * (zoom_factor - 1)
+            o_w = width_in_eff_ + (width_in_eff_ - 1) * (zoom_factor - 1)
+        elif height is not None and width is not None:
+            o_h = height
+            o_w = width
+        elif shrink_factor is not None and zoom_factor is not None:
+            assert shrink_factor >= 1, 'Shrink factor must be positive'
+            assert zoom_factor >= 1, 'Zoom factor must be positive'
+
+            o_h = (height_in_eff_ - 1) / shrink_factor + 1
+            o_w = (width_in_eff_ - 1) / shrink_factor + 1
+            o_h = o_h + (o_h - 1) * (zoom_factor - 1)
+            o_w = o_w + (o_w - 1) * (zoom_factor - 1)
+        else:
+            o_h = 0
+            o_w = 0
+            print('InterpLayer error. Should not come here')
+
+        assert o_h > 0, 'height should be positive'
+        assert o_w > 0, 'width should be positive'
+
+        return o_h, o_w
+
+    @layer
+    def interp(self, input, height, width, c_o, zoom_factor,
+               shrink_factor, pad_beg, pad_end):
+        n, h_i, w_i, c_i = input.get_shape()
+
+        out_height, out_width = self.get_interp_output_shape_impl(h_i, w_i, shrink_factor,
+                                                                  zoom_factor, height, width,
+                                                                  pad_beg, pad_end)
+
+        print __file__, 'interp', out_height, out_width
+        output = tf.image.resize_bilinear(input, [out_height, out_width])
+        return output
 
     @layer
     def conv(self,
@@ -130,11 +180,11 @@ class Network(object):
                 output = convolve(input, kernel)
             else:
                 # Split the input into groups and then convolve each of them independently
-                input_groups = tf.split(3, group, input)
-                kernel_groups = tf.split(3, group, kernel)
+                input_groups = tf.split(input, group, 3)
+                kernel_groups = tf.split(kernel, group, 3)
                 output_groups = [convolve(i, k) for i, k in zip(input_groups, kernel_groups)]
                 # Concatenate the groups
-                output = tf.concat(3, output_groups)
+                output = tf.concat(output_groups, 3)
             # Add the biases
             if biased:
                 biases = self.make_var('biases', [c_o])
@@ -177,7 +227,7 @@ class Network(object):
 
     @layer
     def concat(self, inputs, axis, name):
-        return tf.concat(concat_dim=axis, values=inputs, name=name)
+        return tf.concat(axis=axis, values=inputs, name=name)
 
     @layer
     def add(self, inputs, name):
