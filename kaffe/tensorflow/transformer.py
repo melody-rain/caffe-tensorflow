@@ -9,7 +9,7 @@ from ..transformers import (DataInjector, DataReshaper, NodeRenamer, ReLUFuser,
 from . import network
 
 
-def get_padding_type(kernel_params, input_shape, output_shape):
+def get_padding_type(kernel_params, input_shape, output_shape, do_dilation=False):
     '''Translates Caffe's numeric padding to one of ('SAME', 'VALID').
     Caffe supports arbitrary padding values, while TensorFlow only
     supports 'SAME' and 'VALID' modes. So, not all Caffe paddings
@@ -17,7 +17,11 @@ def get_padding_type(kernel_params, input_shape, output_shape):
     how the padding edge-cases are handled. These are described here:
     https://github.com/Yangqing/caffe2/blob/master/caffe2/proto/caffe2_legacy.proto
     '''
-    k_h, k_w, s_h, s_w, p_h, p_w = kernel_params
+    if do_dilation:
+        k_h, k_w, s_h, s_w, p_h, p_w, d_h, d_w = kernel_params
+    else:
+        k_h, k_w, s_h, s_w, p_h, p_w = kernel_params
+
     s_o_h = np.ceil(input_shape.height / float(s_h))
     s_o_w = np.ceil(input_shape.width / float(s_w))
     if (output_shape.height == s_o_h) and (output_shape.width == s_o_w):
@@ -64,7 +68,6 @@ class TensorFlowNode(object):
 
 
 class MaybeActivated(object):
-
     def __init__(self, node, default=True):
         self.inject_kwargs = {}
         if node.metadata.get('relu', False) != default:
@@ -76,25 +79,33 @@ class MaybeActivated(object):
 
 
 class TensorFlowMapper(NodeMapper):
-
     def get_kernel_params(self, node):
         kernel_params = node.layer.kernel_parameters
         input_shape = node.get_only_parent().output_shape
-        padding = get_padding_type(kernel_params, input_shape, node.output_shape)
+
+        do_dilation = True
+        if node.kind == 'Pooling':
+            do_dilation = False
+
+        padding = get_padding_type(kernel_params, input_shape, node.output_shape, do_dilation=do_dilation)
+
         # Only emit the padding if it's not the default value.
         padding = {'padding': padding} if padding != network.DEFAULT_PADDING else {}
-        return (kernel_params, padding)
+        return kernel_params, padding
 
     def get_interp_params(self, node):
         interp_parameters = node.layer.interp_parameters
         return interp_parameters
 
     def map_convolution(self, node):
-        (kernel_params, kwargs) = self.get_kernel_params(node)
+        kernel_params, kwargs = self.get_kernel_params(node)
         h = kernel_params.kernel_h
         w = kernel_params.kernel_w
         c_o = node.output_shape[1]
         c_i = node.parents[0].output_shape[1]
+        dilation_h = kernel_params.dilation_h
+        dilation_w = kernel_params.dilation_w
+
         group = node.parameters.group
         if group != 1:
             kwargs['group'] = group
@@ -102,6 +113,13 @@ class TensorFlowMapper(NodeMapper):
             kwargs['biased'] = False
         assert kernel_params.kernel_h == h
         assert kernel_params.kernel_w == w
+
+        assert dilation_h == dilation_w, 'dilation_h and dilation_w must be the same'
+
+        if dilation_h != 1 or dilation_w != 1:
+            return MaybeActivated(node)('atrous_conv', kernel_params.kernel_h, kernel_params.kernel_w, c_o,
+                                        dilation_h, **kwargs)
+
         return MaybeActivated(node)('conv', kernel_params.kernel_h, kernel_params.kernel_w, c_o,
                                     kernel_params.stride_h, kernel_params.stride_w, **kwargs)
 
@@ -186,7 +204,6 @@ class TensorFlowMapper(NodeMapper):
 
 
 class TensorFlowEmitter(object):
-
     def __init__(self, tab=None):
         self.tab = tab or ' ' * 4
         self.prefix = ''
@@ -237,7 +254,6 @@ class TensorFlowEmitter(object):
 
 
 class TensorFlowTransformer(object):
-
     def __init__(self, def_path, data_path, verbose=True, phase='test'):
         self.verbose = verbose
         self.phase = phase

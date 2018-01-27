@@ -154,7 +154,14 @@ class LayerAdapter(object):
         s_w = self.get_kernel_value(params.stride_w, params.stride, 1, default=1)
         p_h = self.get_kernel_value(params.pad_h, params.pad, 0, default=0)
         p_w = self.get_kernel_value(params.pad_h, params.pad, 1, default=0)
-        return KernelParameters(k_h, k_w, s_h, s_w, p_h, p_w)
+
+        if self.kind == NodeKind.Convolution:
+            dilation_h = self.get_kernel_value(params.dilation_h, params.dilation, 0, default=1)
+            dilation_w = self.get_kernel_value(params.dilation_w, params.dilation, 1, default=1)
+
+            return KernelParameters(k_h, k_w, s_h, s_w, p_h, p_w, dilation_h, dilation_w)
+        else:
+            return PoolKernelParameters(k_h, k_w, s_h, s_w, p_h, p_w)
 
     @property
     def interp_parameters(self):
@@ -162,7 +169,7 @@ class LayerAdapter(object):
         params = self.parameters
 
         shrink_factor = params.shrink_factor if params.shrink_factor else None
-        print 'dddd', params.shrink_factor
+
         zoom_factor = params.zoom_factor if params.zoom_factor else None
         height = params.height if params.height else None
         width = params.width if params.width else None
@@ -171,11 +178,13 @@ class LayerAdapter(object):
         assert pad_beg <= 0, 'Only supports non-pos padding (cropping) for now'
         assert pad_end <= 0, 'Only supports non-pos padding (cropping) for now'
 
-        print 'interp_parameters', params, self.layer
         return InterpParameters(height, width, zoom_factor, shrink_factor, pad_beg, pad_end)
 
 
 KernelParameters = namedtuple('KernelParameters', ['kernel_h', 'kernel_w', 'stride_h', 'stride_w',
+                                                   'pad_h', 'pad_w', 'dilation_h', 'dilation_w'])
+
+PoolKernelParameters = namedtuple('PoolKernelParameters', ['kernel_h', 'kernel_w', 'stride_h', 'stride_w',
                                                    'pad_h', 'pad_w'])
 
 InterpParameters = namedtuple('InterpParameters', ['height', 'width', 'zoom_factor',

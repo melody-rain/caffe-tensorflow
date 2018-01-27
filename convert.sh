@@ -5,3 +5,4 @@ python convert.py \
 --caffemodel=/home/melody/hdd1/data/pspnet101_VOC2012.caffemodel \
 --data-output-path=pspnet.npy \
 --code-output-path=pspnet.py \
+2>&1 | tee log.txt

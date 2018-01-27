@@ -1,7 +1,7 @@
 import numpy as np
 import tensorflow as tf
 
-DEFAULT_PADDING = 'SAME'
+DEFAULT_PADDING = 'VALID'
 
 
 def layer(op):
@@ -147,7 +147,7 @@ class Network(object):
                                                                   zoom_factor, height, width,
                                                                   pad_beg, pad_end)
 
-        print __file__, 'interp', out_height, out_width
+        print 'interp debug', out_height, out_width
         output = tf.image.resize_bilinear(input, [out_height, out_width])
         return output
 
@@ -191,6 +191,35 @@ class Network(object):
                 output = tf.nn.bias_add(output, biases)
             if relu:
                 # ReLU non-linearity
+                output = tf.nn.relu(output, name=scope.name)
+            return output
+
+    @layer
+    def atrous_conv(self,
+                    input,
+                    k_h,
+                    k_w,
+                    c_o,
+                    dilation,
+                    name,
+                    relu=True,
+                    padding=DEFAULT_PADDING,
+                    group=1,
+                    biased=True):
+        # Verify that the padding is acceptable
+        self.validate_padding(padding)
+        # Get the number of channels in the input
+        c_i = input.get_shape()[-1]
+
+        convolve = lambda i, k: tf.nn.atrous_conv2d(i, k, dilation, padding=padding)
+        with tf.variable_scope(name) as scope:
+            kernel = self.make_var('weights', shape=[k_h, k_w, c_i, c_o])
+            output = convolve(input, kernel)
+
+            if biased:
+                biases = self.make_var('biases', [c_o])
+                output = tf.nn.bias_add(output, biases)
+            if relu:
                 output = tf.nn.relu(output, name=scope.name)
             return output
 

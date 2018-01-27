@@ -6,9 +6,17 @@ from .errors import KaffeError
 TensorShape = namedtuple('TensorShape', ['batch_size', 'channels', 'height', 'width'])
 
 
-def get_filter_output_shape(i_h, i_w, params, round_func):
-    o_h = (i_h + 2 * params.pad_h - params.kernel_h) / float(params.stride_h) + 1
-    o_w = (i_w + 2 * params.pad_w - params.kernel_w) / float(params.stride_w) + 1
+def get_filter_output_shape(i_h, i_w, params, round_func, do_dilation=False):
+    if do_dilation:
+        assert params.stride_h == 1 and params.stride_w == 1
+        kernel_h = params.kernel_h + (params.kernel_h - 1) * (params.dilation_h - 1)
+        kernel_w = params.kernel_w + (params.kernel_w - 1) * (params.dilation_w - 1)
+
+        o_h = (i_h + 2 * params.pad_h - kernel_h) / float(params.stride_h) + 1
+        o_w = (i_w + 2 * params.pad_w - kernel_w) / float(params.stride_w) + 1
+    else:
+        o_h = (i_h + 2 * params.pad_h - params.kernel_h) / float(params.stride_h) + 1
+        o_w = (i_w + 2 * params.pad_w - params.kernel_w) / float(params.stride_w) + 1
     return int(round_func(o_h)), int(round_func(o_w))
 
 
@@ -16,8 +24,15 @@ def get_strided_kernel_output_shape(node, round_func):
     assert node.layer is not None
     input_shape = node.get_only_parent().output_shape
     node.layer.set_input_shape(input_shape)
+
+    do_dilation = False
+    if hasattr(node.layer.kernel_parameters, 'dilation_h'):
+        if node.layer.kernel_parameters.dilation_h > 1:
+            do_dilation = True
+
     o_h, o_w = get_filter_output_shape(input_shape.height, input_shape.width,
-                                       node.layer.kernel_parameters, round_func)
+                                       node.layer.kernel_parameters, round_func,
+                                       do_dilation=do_dilation)
     params = node.layer.parameters
     has_c_o = hasattr(params, 'num_output')
     c = params.num_output if has_c_o else input_shape.channels
@@ -25,7 +40,6 @@ def get_strided_kernel_output_shape(node, round_func):
 
 
 def get_interp_output_shape_impl(i_h, i_w, params, round_func):
-    print type(params.shrink_factor)
     shrink_factor = params.shrink_factor
     zoom_factor = params.zoom_factor
     height = params.height
