@@ -4,7 +4,7 @@ from ..errors import KaffeError, print_stderr
 from ..graph import GraphBuilder, NodeMapper
 from ..layers import NodeKind
 from ..transformers import (DataInjector, DataReshaper, NodeRenamer, ReLUFuser,
-                            BatchNormScaleBiasFuser, BatchNormPreprocessor, ParameterNamer)
+                            BatchNormScaleBiasFuser, BatchNormPreprocessor, ParameterNamer, BNPreprocessor)
 
 from . import network
 
@@ -278,7 +278,7 @@ class TensorFlowTransformer(object):
             # TODO: Move non-linearity application to layer wrapper, allowing
             # any arbitrary operation to be optionally activated.
             ReLUFuser(allowed_parent_types=[NodeKind.Convolution, NodeKind.InnerProduct,
-                                            NodeKind.BatchNorm]),
+                                            NodeKind.BatchNorm, NodeKind.BN]),
 
             # Rename nodes
             # Slashes are used for scoping in TensorFlow. Replace slashes
@@ -310,6 +310,9 @@ class TensorFlowTransformer(object):
 
                 # Pre-process batch normalization data
                 BatchNormPreprocessor(),
+
+                # Pre-process batch normalization data
+                BNPreprocessor(),
 
                 # Convert parameters to dictionaries
                 ParameterNamer(),

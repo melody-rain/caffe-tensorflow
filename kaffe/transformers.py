@@ -249,6 +249,26 @@ class BatchNormPreprocessor(object):
         return graph
 
 
+class BNPreprocessor(object):
+    '''
+    Prescale batch normalization parameters.
+    Concatenate gamma (scale) and beta (bias) terms if set.
+    '''
+
+    def __call__(self, graph):
+        for node in graph.nodes:
+            if node.kind != NodeKind.BN:
+                continue
+            assert node.data is not None
+            assert len(node.data) == 4
+
+            # scale: slope or gamma, offset: bias or beta
+            scale, offset, mean, variance = node.data
+            # print 'BN', len(node.data), scale.sum() / scale.size, offset.sum() / offset.size, \
+            # mean.sum() / mean.size, variance.sum() / variance.size
+        return graph
+
+
 class NodeRenamer(object):
     '''
     Renames nodes in the graph using a given unary function that
@@ -282,7 +302,7 @@ class ParameterNamer(object):
                 if len(node.data) == 4:
                     names += ('scale', 'offset')
             elif node.kind == NodeKind.BN:
-                names = ('slope_filler', 'bias_filler')
+                names = ('scale', 'offset')
                 if len(node.data) == 4:
                     names += ('mean', 'variance')
             else:

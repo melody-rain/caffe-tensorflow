@@ -3,6 +3,11 @@ import tensorflow as tf
 
 DEFAULT_PADDING = 'VALID'
 
+BN_param_map = {'scale': 'gamma',
+                'offset': 'beta',
+                'variance': 'moving_variance',
+                'mean': 'moving_mean'}
+
 
 def layer(op):
     '''Decorator for composable network layers.'''
@@ -30,8 +35,7 @@ def layer(op):
 
 
 class Network(object):
-
-    def __init__(self, inputs, trainable=True):
+    def __init__(self, inputs, is_training=False, trainable=True):
         # The input nodes for this network
         self.inputs = inputs
         # The current list of terminal nodes
@@ -40,13 +44,14 @@ class Network(object):
         self.layers = dict(inputs)
         # If true, the resulting variables are set as trainable
         self.trainable = trainable
+        self.is_training = is_training
         # Switch variable for dropout
         self.use_dropout = tf.placeholder_with_default(tf.constant(1.0),
                                                        shape=[],
                                                        name='use_dropout')
-        self.setup()
+        self.setup(is_training)
 
-    def setup(self):
+    def setup(self, is_training):
         '''Construct the network. '''
         raise NotImplementedError('Must be implemented by the subclass.')
 
@@ -61,6 +66,10 @@ class Network(object):
             with tf.variable_scope(op_name, reuse=True):
                 for param_name, data in data_dict[op_name].iteritems():
                     try:
+                        if 'bn' in op_name:
+                            data = np.squeeze(data)
+                            param_name = BN_param_map[param_name]
+
                         var = tf.get_variable(param_name)
                         session.run(var.assign(data))
                     except ValueError:
@@ -103,8 +112,8 @@ class Network(object):
 
     @staticmethod
     def get_interp_output_shape_impl(i_h, i_w, shrink_factor, zoom_factor, height, width, pad_beg, pad_end):
-        height_in_eff_ = int(i_h + pad_beg + pad_end)
-        width_in_eff_ = int(i_w + pad_beg + pad_end)
+        height_in_eff_ = i_h + pad_beg + pad_end
+        width_in_eff_ = i_w + pad_beg + pad_end
 
         assert height_in_eff_ > 0, 'height should be positive'
         assert width_in_eff_ > 0, 'width should be positive'
@@ -138,17 +147,24 @@ class Network(object):
 
         return o_h, o_w
 
+    # @layer
+    # def interp(self, input, height, width, c_o, zoom_factor,
+    #            shrink_factor, pad_beg, pad_end, name):
+    #     n, h_i, w_i, c_i = input.get_shape()
+    #
+    #     print input, height, width, c_o, zoom_factor, shrink_factor, pad_beg, pad_end, name
+    #
+    #     out_height, out_width = self.get_interp_output_shape_impl(h_i, w_i, shrink_factor,
+    #                                                               zoom_factor, height, width,
+    #                                                               pad_beg, pad_end)
+    #
+    #     print 'interp debug', out_height, out_width
+    #     output = tf.image.resize_bilinear(input, [out_height, out_width], name=name)
+    #     return output
+
     @layer
-    def interp(self, input, height, width, c_o, zoom_factor,
-               shrink_factor, pad_beg, pad_end):
-        n, h_i, w_i, c_i = input.get_shape()
-
-        out_height, out_width = self.get_interp_output_shape_impl(h_i, w_i, shrink_factor,
-                                                                  zoom_factor, height, width,
-                                                                  pad_beg, pad_end)
-
-        print 'interp debug', out_height, out_width
-        output = tf.image.resize_bilinear(input, [out_height, out_width])
+    def interp(self, input, shape, name):
+        output = tf.image.resize_bilinear(input, shape, name=name)
         return output
 
     @layer
@@ -169,8 +185,8 @@ class Network(object):
         # Get the number of channels in the input
         c_i = input.get_shape()[-1]
         # Verify that the grouping parameter is valid
-        assert c_i % group == 0
-        assert c_o % group == 0
+        # assert c_i % group == 0, '{} vs {}'.format(c_i, group)
+        # assert c_o % group == 0, '{} vs {}'.format(c_o, group)
         # Convolution for a given input and kernel
         convolve = lambda i, k: tf.nn.conv2d(i, k, [1, s_h, s_w, 1], padding=padding)
         with tf.variable_scope(name) as scope:
@@ -293,29 +309,44 @@ class Network(object):
                 raise ValueError('Rank 2 tensor input expected for softmax!')
         return tf.nn.softmax(input, name=name)
 
+    # @layer
+    # def batch_normalization(self, input, name, scale_offset=True, relu=False):
+    #     # NOTE: Currently, only inference is supported
+    #     with tf.variable_scope(name) as scope:
+    #         shape = [input.get_shape()[-1]]
+    #         if scale_offset:
+    #             scale = self.make_var('scale', shape=shape)
+    #             offset = self.make_var('offset', shape=shape)
+    #         else:
+    #             scale, offset = (None, None)
+    #         output = tf.nn.batch_normalization(
+    #             input,
+    #             mean=self.make_var('mean', shape=shape),
+    #             variance=self.make_var('variance', shape=shape),
+    #             offset=offset,
+    #             scale=scale,
+    #             # TODO: This is the default Caffe batch norm eps
+    #             # Get the actual eps from parameters
+    #             variance_epsilon=1e-5,
+    #             name=name)
+    #         if relu:
+    #             output = tf.nn.relu(output)
+    #         return output
+
     @layer
     def batch_normalization(self, input, name, scale_offset=True, relu=False):
-        # NOTE: Currently, only inference is supported
-        with tf.variable_scope(name) as scope:
-            shape = [input.get_shape()[-1]]
-            if scale_offset:
-                scale = self.make_var('scale', shape=shape)
-                offset = self.make_var('offset', shape=shape)
-            else:
-                scale, offset = (None, None)
-            output = tf.nn.batch_normalization(
-                input,
-                mean=self.make_var('mean', shape=shape),
-                variance=self.make_var('variance', shape=shape),
-                offset=offset,
-                scale=scale,
-                # TODO: This is the default Caffe batch norm eps
-                # Get the actual eps from parameters
-                variance_epsilon=1e-5,
-                name=name)
-            if relu:
-                output = tf.nn.relu(output)
-            return output
+        output = tf.layers.batch_normalization(
+            input,
+            momentum=0.95,
+            epsilon=1e-5,
+            training=self.is_training,
+            name=name
+        )
+
+        if relu:
+            output = tf.nn.relu(output)
+
+        return output
 
     @layer
     def dropout(self, input, keep_prob, name):
