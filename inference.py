@@ -11,20 +11,17 @@ import json
 from pspnet import pspnet101_VOC2012
 
 VOC2012_param = {'crop_size': [473, 473],
-                 'num_classes': 21,
+                 'num_classes': 2,
                  'model': pspnet101_VOC2012}
 
 SAVE_DIR = './output_tf/'
-SNAPSHOT_DIR = './'
+SNAPSHOT_DIR = '/home/melody/develop/tensorflow-pspnet/train/pspnet'
 
 color_info_file = '/home/melody/develop/caffe-segmentation/misc/palette/pascal_voc.json'
 with open(color_info_file) as fd:
     data = json.load(fd)
-    palette = np.array(data['palette'][:-1], dtype=np.uint8)
+    palette = np.array(data['palette'][:2], dtype=np.uint8)
     IMG_MEAN = np.array(data['mean'], dtype=np.float32)
-    print(palette)
-    print(IMG_MEAN)
-    # IMG_MEAN = map(lambda x: np.float32(x), IMG_MEAN)
 
 
 def get_arguments():
@@ -82,10 +79,10 @@ def load_img(img_path):
 def preprocess(img, h, w):
     # Convert RGB to BGR
     img_r, img_g, img_b = tf.split(axis=2, num_or_size_splits=3, value=img)
-    img = tf.cast(tf.concat(axis=2, values=[img_b, img_g, img_r]), dtype=tf.float32)
+    img = tf.cast(tf.concat(axis=2, values=[img_b, img_g, img_r]), dtype=tf.uint8)
     # Extract mean.
-    img -= IMG_MEAN
-
+    # img -= IMG_MEAN
+    img = tf.image.convert_image_dtype(img, dtype=tf.float32)
     pad_img = tf.image.pad_to_bounding_box(img, 0, 0, h, w)
     pad_img = tf.expand_dims(pad_img, dim=0)
 
@@ -119,7 +116,8 @@ def main():
     num_classes = param['num_classes']
     PSPNet = param['model']
 
-    args.img_path = '/home/melody/data/VOCdevkit/VOC2012/JPEGImages/2007_003201.jpg'
+    args.img_path = '/home/melody/hdd1/xware-download/carvana/train/c3dafdb02e7f_10.jpg'
+    # args.img_path = '/home/melody/data/VOCdevkit/VOC2012/JPEGImages/2007_003201.jpg'
     # preprocess images
     img, filename = load_img(args.img_path)
     img_shape = tf.shape(img)
@@ -133,12 +131,11 @@ def main():
         flipped_img = tf.expand_dims(flipped_img, dim=0)
         net2 = PSPNet({'data': flipped_img}, trainable=False)
 
-    # raw_output = net.layers['conv6']
+    # conv6
     raw_output = net.layers['pspnet_v1_101/logits']
 
     # Do flipped eval or not
     if args.flipped_eval:
-        # flipped_output = tf.image.flip_left_right(tf.squeeze(net2.layers['conv6']))
         flipped_output = tf.image.flip_left_right(tf.squeeze(net2.layers['pspnet_v1_101/logits']))
         flipped_output = tf.expand_dims(flipped_output, dim=0)
         raw_output = tf.add_n([raw_output, flipped_output])
@@ -159,11 +156,13 @@ def main():
 
     restore_var = tf.global_variables()
 
-    net.load('/home/melody/develop/caffe-tensorflow/pspnet.npy', sess)
-
-    saver = tf.train.Saver()
-
-    save(saver, sess, SAVE_DIR, 0)
+    ckpt = tf.train.get_checkpoint_state(args.checkpoints)
+    if ckpt and ckpt.model_checkpoint_path:
+        loader = tf.train.Saver(var_list=restore_var)
+        load_step = int(os.path.basename(ckpt.model_checkpoint_path).split('-')[1])
+        load(loader, sess, ckpt.model_checkpoint_path)
+    else:
+        print('No checkpoint file found.')
 
     preds = sess.run(pred)
 

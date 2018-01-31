@@ -8,6 +8,10 @@ from ..transformers import (DataInjector, DataReshaper, NodeRenamer, ReLUFuser,
 
 from . import network
 
+import json
+
+with open('pspnet_dict.json') as fd:
+    caffe_tf_name = json.load(fd)
 
 def get_padding_type(kernel_params, input_shape, output_shape, do_dilation=False):
     '''Translates Caffe's numeric padding to one of ('SAME', 'VALID').
@@ -318,6 +322,11 @@ class TensorFlowTransformer(object):
                 ParameterNamer(),
             ]
             self.graph = self.graph.transformed(transformers)
+
+            for node in self.graph.nodes:
+                if caffe_tf_name.has_key(node.name):
+                    node.name = caffe_tf_name[node.name]
+
             self.params = {node.name: node.data for node in self.graph.nodes if node.data}
         return self.params
 

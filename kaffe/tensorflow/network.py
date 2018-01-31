@@ -66,7 +66,7 @@ class Network(object):
             with tf.variable_scope(op_name, reuse=True):
                 for param_name, data in data_dict[op_name].iteritems():
                     try:
-                        if 'bn' in op_name:
+                        if 'bn' in op_name or 'BatchNorm' in op_name:
                             data = np.squeeze(data)
                             param_name = BN_param_map[param_name]
 
